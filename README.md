@@ -78,8 +78,8 @@ predictions = model.predict(test_data)
 本專案採用 MIT 授權協議 - 查看 [LICENSE](LICENSE) 文件了解更多詳情
 
 ## 聯繫方式
-- 項目維護者：[您的姓名]
-- 電子郵件：[您的郵箱]
+- 項目維護者：阿拉伯企鵝
+- 電子郵件：lujiang.scout@gmail.com
 
 ## 致謝
 感謝所有對本專案做出貢獻的開發者。
