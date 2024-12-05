@@ -99,64 +99,43 @@ def detect_cards(image_path):
         
     print(f"圖片尺寸: {image.shape}")
     
+    # 圖像預處理
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    edges = cv2.Canny(blurred, 30, 150)
+    # 使用Canny邊緣檢測
+    edges = cv2.Canny(blurred, 50, 150)
     
-    kernel = np.ones((5,5), np.uint8)
-    dilated = cv2.dilate(edges, kernel, iterations=1)
+    # 使用形態學操作
+    kernel = np.ones((3,3), np.uint8)
+    dilated = cv2.dilate(edges, kernel, iterations=2)
     
+    # 查找輪廓
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     print(f"找到 {len(contours)} 個輪廓")
     
     card_regions = []
-    min_area = image.shape[0] * image.shape[1] * 0.02  
+    min_area = image.shape[0] * image.shape[1] * 0.05  # 增加最小面積閾值
+    max_area = image.shape[0] * image.shape[1] * 0.25  # 調整最大面積閾值
     
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < min_area:
+        if area < min_area or area > max_area:
             continue
             
         x, y, w, h = cv2.boundingRect(contour)
-        aspect_ratio = float(w) / h
         
-        if 0.6 <= aspect_ratio <= 0.8:
+        # 計算長寬比
+        aspect_ratio = float(w) / h if h != 0 else 0
+        
+        # 遊戲中卡片的長寬比範圍
+        if 0.6 <= aspect_ratio <= 0.85:
             card_regions.append((x, y, w, h))
     
-    if len(card_regions) != 5:
-        print(f"檢測到 {len(card_regions)} 個區域，進行後處理")
-        
-        if len(card_regions) > 5:
-            card_regions = sorted(card_regions, key=lambda x: x[2] * x[3], reverse=True)[:5]
-        
-        if len(card_regions) < 5:
-            print("使用固定分割方法")
-            card_regions = []
-            total_width = image.shape[1]
-            total_height = image.shape[0]
-            
-            # 計算上排卡片的位置（3張）
-            card_width = total_width // 3
-            for i in range(3):
-                x = i * card_width
-                w = card_width
-                h = int(total_height * 0.45)  
-                card_regions.append((x, 0, w, h))
-            
-            # 計算下排卡片的位置（2張）
-            card_width = total_width // 2
-            y = int(total_height * 0.55)  
-            h = total_height - y  
-            for i in range(2):
-                x = i * card_width + card_width // 4  
-                w = card_width
-                card_regions.append((x, y, w, h))
+    print(f"檢測到 {len(card_regions)} 個可能的卡牌區域")
     
-    # 根據位置排序（先上排從左到右，再下排從左到右）
-    card_regions.sort(key=lambda x: (x[1], x[0]))
-    
-    print(f"最終檢測到 {len(card_regions)} 張卡牌")
+    # 根據位置排序（從上到下，從左到右）
+    card_regions.sort(key=lambda x: (x[1] // (image.shape[0] // 3), x[0]))
     
     # 保存調試圖像
     debug_image = image.copy()
@@ -167,6 +146,64 @@ def detect_cards(image_path):
     cv2.imwrite('debug_detection.jpg', debug_image)
     
     return card_regions
+
+def remove_overlapping_regions(regions, overlap_thresh=0.3):
+    """
+    移除重疊的區域
+    :param regions: 區域列表 [(x, y, w, h), ...]
+    :param overlap_thresh: 重疊閾值
+    :return: 過濾後的區域列表
+    """
+    if not regions:
+        return []
+        
+    # 計算每個區域的面積
+    areas = [w * h for (x, y, w, h) in regions]
+    
+    # 根據面積排序（從大到小）
+    idxs = np.argsort(areas)[::-1]
+    
+    # 保存要保留的區域
+    keep = []
+    
+    while len(idxs) > 0:
+        # 保留最大的區域
+        current = idxs[0]
+        keep.append(current)
+        
+        # 計算當前區域與其他區域的重疊度
+        overlapping = []
+        for idx in idxs[1:]:
+            overlap = calculate_overlap(regions[current], regions[idx])
+            if overlap > overlap_thresh:
+                overlapping.append(idx)
+                
+        # 移除重疊的區域
+        idxs = [idx for idx in idxs[1:] if idx not in overlapping]
+    
+    return [regions[i] for i in keep]
+
+def calculate_overlap(region1, region2):
+    """
+    計算兩個區域的重疊度
+    """
+    x1, y1, w1, h1 = region1
+    x2, y2, w2, h2 = region2
+    
+    # 計算相交區域
+    x_left = max(x1, x2)
+    y_top = max(y1, y2)
+    x_right = min(x1 + w1, x2 + w2)
+    y_bottom = min(y1 + h1, y2 + h2)
+    
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+        
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    area1 = w1 * h1
+    area2 = w2 * h2
+    
+    return intersection_area / float(min(area1, area2))
 
 
 def extract_cards(image_path, output_dir="temp_cards"):
@@ -201,7 +238,6 @@ def main(target_image_path):
     data_dir = "data"
     temp_dir = "temp_cards"
 
-    print(f"處理圖片: {target_image_path}")
     print("加載參考圖像...")
     reference_data = load_reference_data(data_dir)
     print(f"已加載 {sum(len(cat) for cat in reference_data.values())} 張參考圖像")
